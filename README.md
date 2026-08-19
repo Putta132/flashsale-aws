@@ -1,3 +1,3 @@
-# FlashSale AWS - samdevops.online
+# FlashSale AWS
 
-Complete Multi-AZ E-Commerce Architecture on AWS Mumbai (ap-south-1).
+Architecture: Route 53 -> CloudFront -> WAF -> ALB -> EC2 -> ElastiCache + RDS
