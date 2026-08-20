@@ -454,16 +454,16 @@ Resources:
     Type: AWS::ElastiCache::ReplicationGroup
     Properties:
       ReplicationGroupDescription: FlashSale Redis Cache
-      NumCacheClusters: 2
+      NumCacheClusters: 1
       CacheNodeType: cache.t3.micro
       Engine: redis
       EngineVersion: '7.0'
       CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
       SecurityGroupIds:
         - !Ref RedisSecurityGroup
-      AtRestEncryptionEnabled: true
+      AtRestEncryptionEnabled: false
       TransitEncryptionEnabled: false
-      AutomaticFailoverEnabled: true
+      AutomaticFailoverEnabled: false
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-redis"
@@ -501,7 +501,7 @@ Resources:
       DBSubnetGroupName: !Ref RDSSubnetGroup
       VPCSecurityGroups:
         - !Ref RDSSecurityGroup
-      BackupRetentionPeriod: 7
+      BackupRetentionPeriod: 0
       DeletionProtection: false
       PubliclyAccessible: false
       Tags:
