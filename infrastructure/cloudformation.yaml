@@ -1,22 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: >
-  FlashSale AWS - Complete Multi-AZ E-Commerce Infrastructure
-  Region: ap-south-1 (Mumbai)
-  Architecture: Route53 -> CloudFront -> WAF -> ALB -> EC2 ASG -> ElastiCache + RDS Multi-AZ
+Description: FlashSale AWS - E-Commerce Infrastructure - ap-south-1 Mumbai
 
 Parameters:
   ProjectName:
     Type: String
     Default: flashsale-aws
-  Environment:
-    Type: String
-    Default: prod
-  EC2InstanceType:
-    Type: String
-    Default: t3.micro
-  DBInstanceClass:
-    Type: String
-    Default: db.t3.micro
   DBPassword:
     Type: String
     NoEcho: true
@@ -28,13 +16,10 @@ Parameters:
   ACMCertificateARN:
     Type: String
     Default: none
-    Description: ACM Certificate ARN from us-east-1 for CloudFront HTTPS
 
-# ─────────────────────────────────────────────
-# NETWORKING
-# ─────────────────────────────────────────────
 Resources:
 
+# ── VPC ──────────────────────────────────────────────────────────────────────
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -47,10 +32,6 @@ Resources:
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-igw"
 
   AttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -58,7 +39,7 @@ Resources:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
 
-  # Public Subnets (ALB lives here)
+# ── SUBNETS ───────────────────────────────────────────────────────────────────
   PublicSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
@@ -81,7 +62,6 @@ Resources:
         - Key: Name
           Value: !Sub "${ProjectName}-public-b"
 
-  # Private Subnets (EC2 lives here)
   PrivateSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
@@ -102,7 +82,6 @@ Resources:
         - Key: Name
           Value: !Sub "${ProjectName}-private-b"
 
-  # Data Subnets (RDS + ElastiCache live here - completely private)
   DataSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
@@ -123,7 +102,7 @@ Resources:
         - Key: Name
           Value: !Sub "${ProjectName}-data-b"
 
-  # NAT Gateway (allows private EC2 to reach internet for updates)
+# ── NAT GATEWAY ───────────────────────────────────────────────────────────────
   EIP:
     Type: AWS::EC2::EIP
     DependsOn: AttachGateway
@@ -135,11 +114,8 @@ Resources:
     Properties:
       AllocationId: !GetAtt EIP.AllocationId
       SubnetId: !Ref PublicSubnetA
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-nat"
 
-  # Route Tables
+# ── ROUTE TABLES ─────────────────────────────────────────────────────────────
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -172,6 +148,7 @@ Resources:
 
   PrivateRoute:
     Type: AWS::EC2::Route
+    DependsOn: NATGateway
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
@@ -189,14 +166,11 @@ Resources:
       SubnetId: !Ref PrivateSubnetB
       RouteTableId: !Ref PrivateRouteTable
 
-# ─────────────────────────────────────────────
-# SECURITY GROUPS
-# ─────────────────────────────────────────────
-
+# ── SECURITY GROUPS ───────────────────────────────────────────────────────────
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: ALB - Allow HTTP and HTTPS from internet
+      GroupDescription: ALB allow HTTP HTTPS
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -207,56 +181,41 @@ Resources:
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-alb-sg"
 
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: EC2 - Only allow traffic from ALB
+      GroupDescription: EC2 allow from ALB only
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 8000
           ToPort: 8000
           SourceSecurityGroupId: !Ref ALBSecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-ec2-sg"
 
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: RDS - Only allow traffic from EC2
+      GroupDescription: RDS allow from EC2 only
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
           SourceSecurityGroupId: !Ref EC2SecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-rds-sg"
 
   RedisSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: ElastiCache - Only allow traffic from EC2
+      GroupDescription: Redis allow from EC2 only
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 6379
           ToPort: 6379
           SourceSecurityGroupId: !Ref EC2SecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-redis-sg"
 
-# ─────────────────────────────────────────────
-# IAM ROLE FOR EC2
-# ─────────────────────────────────────────────
-
+# ── IAM ───────────────────────────────────────────────────────────────────────
   EC2Role:
     Type: AWS::IAM::Role
     Properties:
@@ -271,19 +230,16 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
       Policies:
-        - PolicyName: FlashSaleAppPolicy
+        - PolicyName: FlashSalePolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
-                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/*"
-              - Effect: Allow
-                Action:
                   - s3:GetObject
                   - s3:PutObject
-                Resource: !Sub "arn:aws:s3:::${ProjectName}-assets-${AWS::AccountId}/*"
+                Resource: '*'
 
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -291,57 +247,27 @@ Resources:
       Roles:
         - !Ref EC2Role
 
-# ─────────────────────────────────────────────
-# SECRETS MANAGER
-# ─────────────────────────────────────────────
-
-  DBSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub "${ProjectName}/db-credentials"
-      Description: RDS MySQL credentials for FlashSale app
-      SecretString: !Sub |
-        {
-          "username": "admin",
-          "password": "${DBPassword}",
-          "database": "flashsale",
-          "host": "TO_BE_UPDATED_AFTER_RDS_CREATION"
-        }
-
-# ─────────────────────────────────────────────
-# S3 BUCKET
-# ─────────────────────────────────────────────
-
+# ── S3 ────────────────────────────────────────────────────────────────────────
   AssetsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${ProjectName}-assets-${AWS::AccountId}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
-      LifecycleConfiguration:
-        Rules:
-          - Id: MoveToIA
-            Status: Enabled
-            Transitions:
-              - TransitionInDays: 90
-                StorageClass: STANDARD_IA
-              - TransitionInDays: 365
-                StorageClass: GLACIER
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-assets"
 
-# ─────────────────────────────────────────────
-# LOAD BALANCER
-# ─────────────────────────────────────────────
+# ── SECRETS MANAGER ───────────────────────────────────────────────────────────
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: RDS MySQL credentials for FlashSale
+      SecretString: !Sub '{"username":"admin","password":"${DBPassword}","database":"flashsale"}'
 
+# ── ALB ───────────────────────────────────────────────────────────────────────
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: !Sub "${ProjectName}-alb"
       Scheme: internet-facing
       Type: application
       Subnets:
@@ -349,14 +275,10 @@ Resources:
         - !Ref PublicSubnetB
       SecurityGroups:
         - !Ref ALBSecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-alb"
 
   ALBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: !Sub "${ProjectName}-tg"
       Port: 8000
       Protocol: HTTP
       VpcId: !Ref VPC
@@ -377,17 +299,13 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref ALBTargetGroup
 
-# ─────────────────────────────────────────────
-# EC2 AUTO SCALING
-# ─────────────────────────────────────────────
-
+# ── EC2 AUTO SCALING ─────────────────────────────────────────────────────────
   EC2LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: !Sub "${ProjectName}-lt"
       LaunchTemplateData:
         ImageId: ami-0f5ee92e2d63afc18
-        InstanceType: !Ref EC2InstanceType
+        InstanceType: t3.micro
         IamInstanceProfile:
           Arn: !GetAtt EC2InstanceProfile.Arn
         SecurityGroupIds:
@@ -402,14 +320,13 @@ Resources:
             git clone https://github.com/Putta132/flashsale-aws.git /app
             cd /app/app
             export AWS_REGION=${AWS::Region}
-            export SECRET_NAME=${ProjectName}/db-credentials
+            export SECRET_NAME=flashsale-aws/db-credentials
             nohup uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 > /var/log/flashsale.log 2>&1 &
 
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     DependsOn: NATGateway
     Properties:
-      AutoScalingGroupName: !Sub "${ProjectName}-asg"
       LaunchTemplate:
         LaunchTemplateId: !Ref EC2LaunchTemplate
         Version: !GetAtt EC2LaunchTemplate.LatestVersionNumber
@@ -438,14 +355,11 @@ Resources:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: 70.0
 
-# ─────────────────────────────────────────────
-# ELASTICACHE REDIS
-# ─────────────────────────────────────────────
-
+# ── ELASTICACHE REDIS ────────────────────────────────────────────────────────
   ElastiCacheSubnetGroup:
     Type: AWS::ElastiCache::SubnetGroup
     Properties:
-      Description: Subnet group for ElastiCache Redis
+      Description: Subnet group for Redis
       SubnetIds:
         - !Ref DataSubnetA
         - !Ref DataSubnetB
@@ -453,7 +367,7 @@ Resources:
   ElastiCacheRedis:
     Type: AWS::ElastiCache::ReplicationGroup
     Properties:
-      ReplicationGroupDescription: FlashSale Redis Cache
+      ReplicationGroupDescription: FlashSale Redis
       NumCacheClusters: 1
       CacheNodeType: cache.t3.micro
       Engine: redis
@@ -464,39 +378,29 @@ Resources:
       AtRestEncryptionEnabled: false
       TransitEncryptionEnabled: false
       AutomaticFailoverEnabled: false
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-redis"
 
-# ─────────────────────────────────────────────
-# RDS MYSQL MULTI-AZ (IN PRIVATE DATA SUBNET)
-# ─────────────────────────────────────────────
-
+# ── RDS MYSQL ─────────────────────────────────────────────────────────────────
   RDSSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: Subnet group for RDS MySQL
+      DBSubnetGroupDescription: Subnet group for RDS
       SubnetIds:
         - !Ref DataSubnetA
         - !Ref DataSubnetB
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-rds-subnet"
 
   RDSInstance:
     Type: AWS::RDS::DBInstance
-    DeletionPolicy: Snapshot
+    DeletionPolicy: Delete
     Properties:
-      DBInstanceIdentifier: !Sub "${ProjectName}-db"
-      DBInstanceClass: !Ref DBInstanceClass
+      DBInstanceClass: db.t3.micro
       Engine: mysql
       EngineVersion: '8.0'
       MasterUsername: admin
       MasterUserPassword: !Ref DBPassword
       DBName: flashsale
       AllocatedStorage: '20'
-      StorageType: gp3
-      StorageEncrypted: true
+      StorageType: gp2
+      StorageEncrypted: false
       MultiAZ: false
       DBSubnetGroupName: !Ref RDSSubnetGroup
       VPCSecurityGroups:
@@ -504,26 +408,19 @@ Resources:
       BackupRetentionPeriod: 0
       DeletionProtection: false
       PubliclyAccessible: false
-      Tags:
-        - Key: Name
-          Value: !Sub "${ProjectName}-rds"
 
-# ─────────────────────────────────────────────
-# SNS + CLOUDWATCH ALARMS
-# ─────────────────────────────────────────────
-
+# ── SNS ───────────────────────────────────────────────────────────────────────
   SNSTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Sub "${ProjectName}-alerts"
       Subscription:
         - Protocol: email
           Endpoint: !Ref NotificationEmail
 
+# ── CLOUDWATCH ALARMS ─────────────────────────────────────────────────────────
   HighCPUAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub "${ProjectName}-high-cpu"
       AlarmDescription: EC2 CPU above 85%
       MetricName: CPUUtilization
       Namespace: AWS/EC2
@@ -535,28 +432,9 @@ Resources:
       AlarmActions:
         - !Ref SNSTopic
 
-  RDSConnectionsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub "${ProjectName}-rds-connections"
-      AlarmDescription: RDS connections above 80
-      MetricName: DatabaseConnections
-      Namespace: AWS/RDS
-      Statistic: Average
-      Period: 300
-      EvaluationPeriods: 2
-      Threshold: 80
-      ComparisonOperator: GreaterThanThreshold
-      Dimensions:
-        - Name: DBInstanceIdentifier
-          Value: !Ref RDSInstance
-      AlarmActions:
-        - !Ref SNSTopic
-
   ALB5xxAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub "${ProjectName}-alb-5xx"
       AlarmDescription: ALB 5xx errors above 10
       MetricName: HTTPCode_Target_5XX_Count
       Namespace: AWS/ApplicationELB
@@ -571,10 +449,7 @@ Resources:
       AlarmActions:
         - !Ref SNSTopic
 
-# ─────────────────────────────────────────────
-# ROUTE 53
-# ─────────────────────────────────────────────
-
+# ── ROUTE 53 ─────────────────────────────────────────────────────────────────
   Route53HostedZone:
     Type: AWS::Route53::HostedZone
     Properties:
@@ -591,35 +466,24 @@ Resources:
         EvaluateTargetHealth: true
         HostedZoneId: !GetAtt ApplicationLoadBalancer.CanonicalHostedZoneID
 
-# ─────────────────────────────────────────────
-# OUTPUTS
-# ─────────────────────────────────────────────
-
+# ── OUTPUTS ───────────────────────────────────────────────────────────────────
 Outputs:
   ALBEndpoint:
-    Description: Application Load Balancer URL
+    Description: Load Balancer URL
     Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
 
   RDSEndpoint:
-    Description: RDS MySQL Endpoint (use in .env)
+    Description: RDS MySQL Endpoint
     Value: !GetAtt RDSInstance.Endpoint.Address
 
   ElastiCacheEndpoint:
-    Description: ElastiCache Redis Endpoint (use in .env)
+    Description: Redis Endpoint
     Value: !GetAtt ElastiCacheRedis.PrimaryEndPoint.Address
 
   S3BucketName:
-    Description: S3 Assets Bucket Name
+    Description: S3 Bucket Name
     Value: !Ref AssetsBucket
 
-  SecretsManagerARN:
-    Description: Secrets Manager ARN for DB credentials
-    Value: !Ref DBSecret
-
-  Route53HostedZoneId:
-    Description: Route 53 Hosted Zone ID
-    Value: !Ref Route53HostedZone
-
-  VPCId:
-    Description: VPC ID
-    Value: !Ref VPC
+  Route53NameServers:
+    Description: Update these in Hostinger
+    Value: !Join [', ', !GetAtt Route53HostedZone.NameServers]
