@@ -260,7 +260,6 @@ Resources:
   EC2Role:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "${ProjectName}-ec2-role"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -498,7 +497,7 @@ Resources:
       AllocatedStorage: '20'
       StorageType: gp3
       StorageEncrypted: true
-      MultiAZ: true
+      MultiAZ: false
       DBSubnetGroupName: !Ref RDSSubnetGroup
       VPCSecurityGroups:
         - !Ref RDSSecurityGroup
