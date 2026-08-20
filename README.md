@@ -120,3 +120,5 @@ flashsale-aws/
 │   └── diagram.md
 └── README.md
 ```
+Author
+Prateek Kulkarni
