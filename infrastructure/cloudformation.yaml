@@ -21,7 +21,7 @@ Parameters:
     Type: String
     NoEcho: true
     MinLength: 8
-    Default: FlashSale@2024!
+    Default: FlashSale2024Pass
   NotificationEmail:
     Type: String
     Default: admin@samdevops.online
